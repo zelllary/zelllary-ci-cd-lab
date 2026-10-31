@@ -1,0 +1,61 @@
+
+name: Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: HTML lint
+        run: |
+          npm install -g htmlhint
+          htmlhint index.html
+
+      - name: Build Docker image
+        run: docker build -t my-site:ci .
+
+      - name: Smoke test container
+        run: |
+          docker run -d --name test-site -p 8080:80 my-site:ci
+          for i in $(seq 1 10); do
+            if curl -sf http://localhost:8080 > /tmp/page.html; then break; fi
+            sleep 1
+          done
+          grep -q "zelllary" /tmp/page.html
+          echo "OK"
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f test-site || true
+
+  release:
+    needs: ci
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          push: true
+          tags: ghcr.io/${{ github.repository }}:latest
